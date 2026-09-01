@@ -160,7 +160,7 @@ def build_grid_lines():
     return data_row_lines, col_lines
 
 
-def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045, min_std=13.0, min_contrast=35.0):
+def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045, min_std=13.0, min_contrast=35.0, aspect_thresh=1.6):
     """
     判斷呢一格係：✓(翻工) / X(冇開工) / 空白(漏填)
     用Otsu做「每格獨立」二值化，唔受成張相入面唔均勻嘅光暗/陰影影響
@@ -222,15 +222,15 @@ def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045, min_std=13
     hull_area = cv2.contourArea(hull)
     solidity = total_area / hull_area if hull_area > 0 else 0
 
-    # X：長寬比接近方形(<1.6)，因為兩筆交叉撐開成正方形範圍
-    # ✓：長寬比較大(>=1.6)，因為剔號係斜向一筆長劃
-    if aspect < 1.6:
+    # X：長寬比接近方形(<aspect_thresh)，因為兩筆交叉撐開成正方形範圍
+    # ✓：長寬比較大(>=aspect_thresh)，因為剔號係斜向一筆長劃
+    if aspect < aspect_thresh:
         return "X"
     else:
         return "✓"
 
 
-def process_image(img, min_std=13.0, min_contrast=35.0, min_area_ratio=0.045, margin_ratio=0.24):
+def process_image(img, min_std=13.0, min_contrast=35.0, min_area_ratio=0.045, margin_ratio=0.24, aspect_thresh=1.6):
     detector = get_aruco_detector()
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     corners, ids, _ = detector.detectMarkers(gray)
@@ -287,6 +287,7 @@ def process_image(img, min_std=13.0, min_contrast=35.0, min_area_ratio=0.045, ma
                 min_area_ratio=min_area_ratio,
                 min_std=min_std,
                 min_contrast=min_contrast,
+                aspect_thresh=aspect_thresh,
             ))
         matrix.append(row_vals)
 
@@ -315,6 +316,7 @@ with st.sidebar:
     debug_min_contrast = st.slider("前景/背景最低對比", 0.0, 80.0, 35.0, 1.0)
     debug_min_area_ratio = st.slider("最低墨水面積比例", 0.0, 0.15, 0.045, 0.005)
     debug_margin_ratio = st.slider("格仔邊界收縮比例", 0.0, 0.4, 0.24, 0.01)
+    debug_aspect_thresh = st.slider("✓/X 分界長寬比 (細於呢個=X，大於=✓)", 1.0, 3.0, 1.6, 0.05)
 
 camera_image = st.camera_input("請對準散工申報表拍攝 (需包含 4 角校正標記 + 大廈標記)")
 st.markdown("**— 或者 —**")
@@ -334,6 +336,7 @@ if img_file:
             min_contrast=debug_min_contrast,
             min_area_ratio=debug_min_area_ratio,
             margin_ratio=debug_margin_ratio,
+            aspect_thresh=debug_aspect_thresh,
         )
 
     if df is None:
