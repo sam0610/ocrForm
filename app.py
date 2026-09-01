@@ -230,7 +230,7 @@ def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045, min_std=13
         return "✓"
 
 
-def process_image(img, min_std=13.0, min_contrast=35.0, min_area_ratio=0.045, margin_ratio=0.24, aspect_thresh=1.6):
+def process_image(img, min_std=13.0, min_contrast=35.0, min_area_ratio=0.045, margin_x=0.24, margin_y=0.12, aspect_thresh=1.6):
     detector = get_aruco_detector()
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     corners, ids, _ = detector.detectMarkers(gray)
@@ -283,7 +283,8 @@ def process_image(img, min_std=13.0, min_contrast=35.0, min_area_ratio=0.045, ma
             cell_gray = warped_gray[y0:y1, x0:x1]
             row_vals.append(classify_cell(
                 cell_gray,
-                margin_ratio=margin_ratio,
+                margin_x=margin_x,
+                margin_y=margin_y,
                 min_area_ratio=min_area_ratio,
                 min_std=min_std,
                 min_contrast=min_contrast,
@@ -315,7 +316,8 @@ with st.sidebar:
     debug_min_std = st.slider("最低反差(std) — 太細代表當空白", 0.0, 40.0, 13.0, 0.5)
     debug_min_contrast = st.slider("前景/背景最低對比", 0.0, 80.0, 35.0, 1.0)
     debug_min_area_ratio = st.slider("最低墨水面積比例", 0.0, 0.15, 0.045, 0.005)
-    debug_margin_ratio = st.slider("格仔邊界收縮比例", 0.0, 0.4, 0.24, 0.01)
+    debug_margin_x = st.slider("格仔左右邊界收縮比例", 0.0, 0.4, 0.24, 0.01)
+    debug_margin_y = st.slider("格仔上下邊界收縮比例", 0.0, 0.4, 0.12, 0.01)
     debug_aspect_thresh = st.slider("✓/X 分界長寬比 (細於呢個=X，大於=✓)", 1.0, 3.0, 1.6, 0.05)
 
 camera_image = st.camera_input("請對準散工申報表拍攝 (需包含 4 角校正標記 + 大廈標記)")
@@ -335,7 +337,8 @@ if img_file:
             min_std=debug_min_std,
             min_contrast=debug_min_contrast,
             min_area_ratio=debug_min_area_ratio,
-            margin_ratio=debug_margin_ratio,
+            margin_x=debug_margin_x,
+            margin_y=debug_margin_y,
             aspect_thresh=debug_aspect_thresh,
         )
 
