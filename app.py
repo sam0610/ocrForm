@@ -160,7 +160,7 @@ def build_grid_lines():
     return data_row_lines, col_lines
 
 
-def classify_cell(gray_cell, margin_ratio=0.20, min_area_ratio=0.025):
+def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045):
     """
     判斷呢一格係：✓(翻工) / X(冇開工) / 空白(漏填)
     用Otsu做「每格獨立」二值化，唔受成張相入面唔均勻嘅光暗/陰影影響
@@ -174,7 +174,9 @@ def classify_cell(gray_cell, margin_ratio=0.20, min_area_ratio=0.025):
     cell_blur = cv2.GaussianBlur(cell, (3, 3), 0)
     _, binary = cv2.threshold(cell_blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    # 開運算：用大少少嘅kernel，將格線滲入嚟嘅幼細殘留線徹底剷走，
+    # 淨係留低夠粗嘅真實筆劃(✓/X通常筆劃粗過格線本身)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
 
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -217,7 +219,7 @@ def process_image(img):
     corners, ids, _ = detector.detectMarkers(gray)
 
     if ids is None:
-        return None, "未搵到任何ArUco標記，請重新拍攝，確保4個角標記同大廈標記都影入鏡頭！", img
+        return None, "未搵到任何ArUco標記，請重新拍攝，確保4個角標記同大廈標記都影入鏡頭！", img, None
 
     ids_flat = ids.flatten()
 
@@ -225,7 +227,7 @@ def process_image(img):
     pts = order_corner_points(ids, corners)
     if pts is None:
         found = [i for i in ids_flat if i in CORNER_IDS]
-        return None, f"只搵到{len(found)}/4個角標記，請重新拍攝，確保4個角落都清晰入鏡！", img
+        return None, f"只搵到{len(found)}/4個角標記，請重新拍攝，確保4個角落都清晰入鏡！", img, None
 
     # 大廈標記(獨立於角標，用嚟識別邊間大廈)
     building_name = "未知大廈（未偵測到大廈標記）"
@@ -246,6 +248,13 @@ def process_image(img):
 
     row_lines, col_lines = build_grid_lines()
 
+    # ---- 除錯用：喺拉直咗嘅相上面畫低格仔切割線，等你可以肉眼核對啱唔啱 ----
+    grid_debug = warped.copy()
+    for y in row_lines:
+        cv2.line(grid_debug, (int(col_lines[0]), int(y)), (int(col_lines[-1]), int(y)), (0, 255, 0), 1)
+    for x in col_lines:
+        cv2.line(grid_debug, (int(x), int(row_lines[0])), (int(x), int(row_lines[-1])), (0, 0, 255), 1)
+
     dates = [f"{i}日" for i in range(1, N_DAYS + 1)]
     workers = [f"C{i:04d}" for i in range(1, N_DATA_ROWS + 1)]
     matrix = []
@@ -259,7 +268,7 @@ def process_image(img):
         matrix.append(row_vals)
 
     df = pd.DataFrame(matrix, columns=dates, index=workers)
-    return df, building_name, annotated
+    return df, building_name, annotated, grid_debug
 
 
 # ==========================================
