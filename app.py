@@ -56,18 +56,18 @@ BUILDING_MARKER_MAP = {
 WARP_WIDTH = 3300
 WARP_HEIGHT = 1800
 
-
+# 表格喺畫布入面嘅相對範圍(留返少少邊界畀角標本身占用嘅位置)
 TABLE_LEFT_RATIO = 0.03
 TABLE_RIGHT_RATIO = 0.97
 TABLE_TOP_RATIO = 0.07
 TABLE_BOTTOM_RATIO = 0.97
 
-N_HEADER_ROWS = 3
-N_DATA_ROWS = 21
+N_HEADER_ROWS = 3      # 日期row + 星期row + 欄位標籤row
+N_DATA_ROWS = 21        # C0001 - C0021
 N_DAYS = 31
 
-LEFT_COL_RATIOS = [0.06, 0.04, 0.06, 0.06]
-
+# 左邊資料欄相對闊度比例(散工編號、判頭、散工姓名、工作時間)
+LEFT_COL_RATIOS = [0.06, 0.04, 0.06, 0.06]  # 總和 + 日欄部分 = 1.0
 # 即日欄部分闊度比例 = 1 - sum(LEFT_COL_RATIOS)
 
 # ==========================================
@@ -160,39 +160,55 @@ def build_grid_lines():
     return data_row_lines, col_lines
 
 
-def classify_cell(binary_img, margin_ratio=0.20, min_area=250, slash_aspect_thresh=2.3, circularity_thresh=0.55):
-    h, w = binary_img.shape
+def classify_cell(gray_cell, margin_ratio=0.20, min_area_ratio=0.025):
+    """
+    判斷呢一格係：✓(翻工) / X(冇開工) / 空白(漏填)
+    用Otsu做「每格獨立」二值化，唔受成張相入面唔均勻嘅光暗/陰影影響
+    """
+    h, w = gray_cell.shape
     my, mx = int(h * margin_ratio), int(w * margin_ratio)
-    cell = binary_img[my:h - my, mx:w - mx]
+    cell = gray_cell[my:h - my, mx:w - mx]
     if cell.size == 0:
         return "空白"
 
-    contours, _ = cv2.findContours(cell, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cell_blur = cv2.GaussianBlur(cell, (3, 3), 0)
+    _, binary = cv2.threshold(cell_blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return "空白"
 
-    c = max(contours, key=cv2.contourArea)
-    area = cv2.contourArea(c)
-    if area < min_area:
+    # 用所有輪廓嘅總面積(唔淨係最大嗰嚿)，因為✓同X都可能斷開做幾截筆劃
+    total_area = sum(cv2.contourArea(c) for c in contours)
+    cell_area = cell.shape[0] * cell.shape[1]
+    if total_area < min_area_ratio * cell_area:
         return "空白"
 
-    perimeter = cv2.arcLength(c, True)
-    if perimeter == 0:
-        return "空白"
-    circularity = 4 * np.pi * area / (perimeter ** 2)
-
-    # 用最小外接旋轉矩形嘅長寬比,分辨「單一斜線╱」同「X / 圓」
-    rect = cv2.minAreaRect(c)
+    # 分辨✓ 同 X：
+    # X 通常兩筆交叉，輪廓嘅「凸包缺陷(convexity defects)」數量較多，
+    # 整體形狀貼近方形(minAreaRect長寬比接近1)；
+    # ✓ 剔號通常兩筆唔對稱(一短一長)，輪廓整體斜向一邊，
+    # 外接矩形長寬比通常較大(更加瘦長)。
+    all_pts = np.vstack(contours)
+    rect = cv2.minAreaRect(all_pts)
     (rw, rh) = rect[1]
     if rw == 0 or rh == 0:
         return "空白"
     aspect = max(rw, rh) / min(rw, rh)
 
-    if aspect > slash_aspect_thresh:
-        return "╱"  # 確認冇開工
-    if circularity > circularity_thresh:
-        return "圓形記號"
-    return "X"
+    hull = cv2.convexHull(all_pts)
+    hull_area = cv2.contourArea(hull)
+    solidity = total_area / hull_area if hull_area > 0 else 0
+
+    # X：長寬比接近方形(<1.6)，因為兩筆交叉撐開成正方形範圍
+    # ✓：長寬比較大(>=1.6)，因為剔號係斜向一筆長劃
+    if aspect < 1.6:
+        return "X"
+    else:
+        return "✓"
 
 
 def process_image(img):
@@ -224,8 +240,9 @@ def process_image(img):
     # 透視校正：將表格拉直去固定畫布
     warped = warp_table(img, pts)
     warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-    denoised = cv2.medianBlur(warped_gray, 5)
-    _, binary = cv2.threshold(denoised, 180, 255, cv2.THRESH_BINARY_INV)
+    warped_gray = cv2.medianBlur(warped_gray, 3)
+    # 注意：唔再喺呢度做成張相嘅全域二值化，改為留返喺classify_cell入面
+    # 用Otsu做「每格獨立」判斷，先唔怕相入面局部陰影/光暗不均
 
     row_lines, col_lines = build_grid_lines()
 
@@ -237,8 +254,8 @@ def process_image(img):
         row_vals = []
         for c in range(N_DAYS):
             x0, x1 = int(col_lines[c]), int(col_lines[c + 1])
-            cell_bin = binary[y0:y1, x0:x1]
-            row_vals.append(classify_cell(cell_bin))
+            cell_gray = warped_gray[y0:y1, x0:x1]
+            row_vals.append(classify_cell(cell_gray))
         matrix.append(row_vals)
 
     df = pd.DataFrame(matrix, columns=dates, index=workers)
@@ -283,7 +300,7 @@ if img_file:
         with col1:
             st.subheader("📊 出勤數據預覽")
             st.dataframe(df, height=300)
-            st.caption("符號說明：X = 有開工　○圓形記號 = 有開工（另一種）　╱ = 確認當日冇開工　空白 = 可能漏填")
+            st.caption("符號說明：✓ = 有翻工　X = 冇開工　空白 = 可能漏填，需要跟進")
 
         with col2:
             st.subheader("🔍 角標與校正定位")
