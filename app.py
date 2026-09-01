@@ -160,13 +160,15 @@ def build_grid_lines():
     return data_row_lines, col_lines
 
 
-def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045, min_std=13.0, min_contrast=35.0, aspect_thresh=1.6):
+def classify_cell(gray_cell, margin_x=0.24, margin_y=0.12, min_area_ratio=0.045, min_std=13.0, min_contrast=35.0, aspect_thresh=1.6):
     """
     判斷呢一格係：✓(翻工) / X(冇開工) / 空白(漏填)
     用Otsu做「每格獨立」二值化，唔受成張相入面唔均勻嘅光暗/陰影影響
+    左右(margin_x)同上下(margin_y)分開裁剪，因為格仔通常闊過高，
+    如果上下裁得太多，容易將貼近格仔邊嘅✓/X筆劃都裁走，扭曲埋個形狀。
     """
     h, w = gray_cell.shape
-    my, mx = int(h * margin_ratio), int(w * margin_ratio)
+    my, mx = int(h * margin_y), int(w * margin_x)
     cell = gray_cell[my:h - my, mx:w - mx]
     if cell.size == 0:
         return "空白"
