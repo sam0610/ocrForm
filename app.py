@@ -160,7 +160,7 @@ def build_grid_lines():
     return data_row_lines, col_lines
 
 
-def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045):
+def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045, min_std=13.0, min_contrast=35.0):
     """
     判斷呢一格係：✓(翻工) / X(冇開工) / 空白(漏填)
     用Otsu做「每格獨立」二值化，唔受成張相入面唔均勻嘅光暗/陰影影響
@@ -172,7 +172,24 @@ def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045):
         return "空白"
 
     cell_blur = cv2.GaussianBlur(cell, (3, 3), 0)
-    _, binary = cv2.threshold(cell_blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # 第一步關卡：如果成格根本冇乜反差(淨係白紙+相機雜訊)，
+    # 直接當空白，唔使跑Otsu(Otsu對接近單一色調嘅圖會強行分裂，容易誤判)
+    if cell_blur.std() < min_std:
+        return "空白"
+
+    thresh_val, binary = cv2.threshold(cell_blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # 第二步關卡：檢查Otsu分開嘅「前景」同「背景」反差是否足夠大，
+    # 反差太細代表可能只係雜訊/紙紋，唔係真正墨水
+    fg_mask = binary > 0
+    bg_mask = ~fg_mask
+    if fg_mask.sum() == 0 or bg_mask.sum() == 0:
+        return "空白"
+    fg_mean = cell_blur[fg_mask].mean()
+    bg_mean = cell_blur[bg_mask].mean()
+    if (bg_mean - fg_mean) < min_contrast:
+        return "空白"
 
     # 開運算：用大少少嘅kernel，將格線滲入嚟嘅幼細殘留線徹底剷走，
     # 淨係留低夠粗嘅真實筆劃(✓/X通常筆劃粗過格線本身)
@@ -213,7 +230,7 @@ def classify_cell(gray_cell, margin_ratio=0.24, min_area_ratio=0.045):
         return "✓"
 
 
-def process_image(img):
+def process_image(img, min_std=13.0, min_contrast=35.0, min_area_ratio=0.045, margin_ratio=0.24):
     detector = get_aruco_detector()
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     corners, ids, _ = detector.detectMarkers(gray)
@@ -264,7 +281,13 @@ def process_image(img):
         for c in range(N_DAYS):
             x0, x1 = int(col_lines[c]), int(col_lines[c + 1])
             cell_gray = warped_gray[y0:y1, x0:x1]
-            row_vals.append(classify_cell(cell_gray))
+            row_vals.append(classify_cell(
+                cell_gray,
+                margin_ratio=margin_ratio,
+                min_area_ratio=min_area_ratio,
+                min_std=min_std,
+                min_contrast=min_contrast,
+            ))
         matrix.append(row_vals)
 
     df = pd.DataFrame(matrix, columns=dates, index=workers)
@@ -285,6 +308,14 @@ with st.expander("⚠️ 拍攝要求"):
     - 光線要均勻，避免陰影遮住標記
     """)
 
+with st.sidebar:
+    st.header("🛠️ 除錯設定（可即時調整，唔使改code）")
+    st.caption("如果誤判太多／太少，用呢幾個滑桿試吓，見到準咗就記低個數值，再叫Claude幫手寫返落code永久生效。")
+    debug_min_std = st.slider("最低反差(std) — 太細代表當空白", 0.0, 40.0, 13.0, 0.5)
+    debug_min_contrast = st.slider("前景/背景最低對比", 0.0, 80.0, 35.0, 1.0)
+    debug_min_area_ratio = st.slider("最低墨水面積比例", 0.0, 0.15, 0.045, 0.005)
+    debug_margin_ratio = st.slider("格仔邊界收縮比例", 0.0, 0.4, 0.24, 0.01)
+
 camera_image = st.camera_input("請對準散工申報表拍攝 (需包含 4 角校正標記 + 大廈標記)")
 st.markdown("**— 或者 —**")
 uploaded_image = st.file_uploader("上載已有嘅圖片（例如相簿入面已影低嘅相）", type=["jpg", "jpeg", "png"])
@@ -297,7 +328,13 @@ if img_file:
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
     with st.spinner("🔄 正在進行雲端 OpenCV 解析中..."):
-        df, building, annotated_img, grid_debug_img = process_image(img)
+        df, building, annotated_img, grid_debug_img = process_image(
+            img,
+            min_std=debug_min_std,
+            min_contrast=debug_min_contrast,
+            min_area_ratio=debug_min_area_ratio,
+            margin_ratio=debug_margin_ratio,
+        )
 
     if df is None:
         st.error(building)
