@@ -297,7 +297,7 @@ if img_file:
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
     with st.spinner("🔄 正在進行雲端 OpenCV 解析中..."):
-        df, building, annotated_img = process_image(img)
+        df, building, annotated_img, grid_debug_img = process_image(img)
 
     if df is None:
         st.error(building)
@@ -314,6 +314,10 @@ if img_file:
         with col2:
             st.subheader("🔍 角標與校正定位")
             st.image(annotated_img, channels="BGR", use_container_width=True)
+
+        with st.expander("🩺 除錯用：格仔切割線疊圖（睇吓紅線/綠線同真實表格格線啱唔啱）"):
+            st.image(grid_debug_img, channels="BGR", use_container_width=True)
+            st.caption("綠線 = 行分界　紅線 = 日曆格分界。如果啲線同真實印刷格線對唔上，代表要返去校正工具重新調比例。")
 
         # 檢查漏填（真正空白格）
         blank_count = (df == "空白").sum().sum()
