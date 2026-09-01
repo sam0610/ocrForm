@@ -60,7 +60,7 @@ WARP_HEIGHT = 1800
 TABLE_LEFT_RATIO = 0.03
 TABLE_RIGHT_RATIO = 0.97
 TABLE_TOP_RATIO = 0.07
-TABLE_BOTTOM_RATIO = 0.97
+TABLE_BOTTOM_RATIO = 0.96
 
 N_HEADER_ROWS = 3      # 日期row + 星期row + 欄位標籤row
 N_DATA_ROWS = 21        # C0001 - C0021
@@ -261,7 +261,16 @@ def process_image(img, min_std=13.0, min_contrast=35.0, min_area_ratio=0.045, ma
     # 透視校正：將表格拉直去固定畫布
     warped = warp_table(img, pts)
     warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-    warped_gray = cv2.medianBlur(warped_gray, 3)
+
+    # ---- 光暗拉勻(flat-fielding)：消除相片入面大範圍嘅陰影/光暗漸變 ----
+    # 陰影/漏光呢類係「大範圍慢慢變化」，用一個好大嘅模糊核估計返個「背景光暗」，
+    # 再將原圖除返呢個背景，淨係留低「細範圍、突然」嘅真正墨水痕跡
+    bg = cv2.GaussianBlur(warped_gray, (0, 0), sigmaX=WARP_WIDTH / 12)
+    bg = np.where(bg == 0, 1, bg)  # 避免除零
+    normalized = cv2.divide(warped_gray.astype(np.float32), bg.astype(np.float32), scale=255)
+    normalized = np.clip(normalized, 0, 255).astype(np.uint8)
+
+    warped_gray = cv2.medianBlur(normalized, 3)
     # 注意：唔再喺呢度做成張相嘅全域二值化，改為留返喺classify_cell入面
     # 用Otsu做「每格獨立」判斷，先唔怕相入面局部陰影/光暗不均
 
